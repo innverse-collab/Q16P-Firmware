@@ -108,40 +108,122 @@ layer_state_t layer_state_set_user(layer_state_t state) {
     return state;
 }
 
-// Spacebar and encoder switch handling - override matrix scan
+// Custom function for base layer encoder switch
+void base_layer_encoder_switch_sequence(void) {
+    register_code(KC_LGUI);
+    register_code(KC_R);
+    unregister_code(KC_R);
+    unregister_code(KC_LGUI);
+    
+    // 100ms delay
+    wait_ms(100);
+    
+    // Type "www.caniusevia.com"
+    SEND_STRING("www.caniusevia.com");
+    
+    // 100ms delay
+    wait_ms(100);
+    
+    // Press Enter
+    register_code(KC_ENT);
+    unregister_code(KC_ENT);
+}
+
+// Custom function for layer 1 encoder switch (Ctrl + Z for UNDO)
+void layer_1_encoder_switch_sequence(void) {
+    register_code(KC_LCTL);
+    register_code(KC_Z);
+    unregister_code(KC_Z);
+    unregister_code(KC_LCTL);
+}
+
+// Custom function for layer 2 encoder switch (Ctrl + Y for REDO)
+void layer_2_encoder_switch_sequence(void) {
+    register_code(KC_LCTL);
+    register_code(KC_Y);
+    unregister_code(KC_Y);
+    unregister_code(KC_LCTL);
+}
+
+// Custom function for layer 3 encoder switch (Windows + L to lock)
+void layer_3_encoder_switch_sequence(void) {
+    register_code(KC_LGUI);
+    register_code(KC_L);
+    unregister_code(KC_L);
+    unregister_code(KC_LGUI);
+}
+
+// Encoder 1 switch mapping - programmable per layer
+const uint16_t PROGMEM encoder_1_switch_map[] = {
+    [_BASE]  = KC_NO,   // Custom sequence for base layer (handled separately)
+    [_LAY_1] = KC_NO,   // Custom sequence for layer 1 (handled separately) UNDO
+    [_LAY_2] = KC_NO,   // Custom sequence for layer 2 (handled separately) REDO
+    [_LAY_3] = KC_NO    // Custom sequence for layer 3 (handled separately) Lock Screen
+};
+
+// Spacebar and encoder 1 switch handling - override matrix scan
 void matrix_scan_user(void) {
     static bool spacebar_pressed = false;
     static bool enc_sw_1_pressed = false;
-    static bool enc_sw_2_pressed = false;
+    static uint32_t spacebar_debounce_time = 0;
+    static uint32_t enc_sw_1_debounce_time = 0;
     
-    // Spacebar handling (active HIGH - pulldown resistor)
+    // Spacebar handling (active HIGH - pulldown resistor) with debouncing
     bool current_spacebar_state = readPin(SPACEBAR_PIN);
+    uint32_t current_time = timer_read32();
+    
     if (current_spacebar_state && !spacebar_pressed) {
-        register_code(KC_SPC);
-        spacebar_pressed = true;
+        if (current_time - spacebar_debounce_time > 5) { // 5ms debounce
+            register_code(KC_SPC);
+            spacebar_pressed = true;
+        }
     } else if (!current_spacebar_state && spacebar_pressed) {
-        unregister_code(KC_SPC);
-        spacebar_pressed = false;
+        if (current_time - spacebar_debounce_time > 5) { // 5ms debounce
+            unregister_code(KC_SPC);
+            spacebar_pressed = false;
+        }
+    } else if (current_spacebar_state != spacebar_pressed) {
+        spacebar_debounce_time = current_time;
     }
     
-    // Encoder 1 switch handling (active LOW - pullup resistor)
+    // Get current layer for encoder switch mapping
+    uint8_t current_layer = get_highest_layer(layer_state);
+    
+    // Encoder 1 switch handling (active LOW - pullup resistor) with debouncing
     bool current_enc_sw_1_state = !readPin(ENC_SW_1_PIN);
-    if (current_enc_sw_1_state && !enc_sw_1_pressed) {
-        register_code(KC_ENT);  // You can change this to any key you want
-        enc_sw_1_pressed = true;
-    } else if (!current_enc_sw_1_state && enc_sw_1_pressed) {
-        unregister_code(KC_ENT);
-        enc_sw_1_pressed = false;
-    }
     
-    // Encoder 2 switch handling (active LOW - pullup resistor)
-    bool current_enc_sw_2_state = !readPin(ENC_SW_2_PIN);
-    if (current_enc_sw_2_state && !enc_sw_2_pressed) {
-        register_code(KC_ESC);  // You can change this to any key you want
-        enc_sw_2_pressed = true;
-    } else if (!current_enc_sw_2_state && enc_sw_2_pressed) {
-        unregister_code(KC_ESC);
-        enc_sw_2_pressed = false;
+    if (current_enc_sw_1_state && !enc_sw_1_pressed) {
+        if (current_time - enc_sw_1_debounce_time > 5) { // 5ms debounce
+            if (current_layer == _BASE) {
+                // Execute custom sequence for base layer
+                base_layer_encoder_switch_sequence();
+            } else if (current_layer == _LAY_1) {
+                // Execute custom sequence for layer 1 (UNDO)
+                layer_1_encoder_switch_sequence();
+            } else if (current_layer == _LAY_2) {
+                // Execute custom sequence for layer 2 (REDO)
+                layer_2_encoder_switch_sequence();
+            } else if (current_layer == _LAY_3) {
+                // Execute custom sequence for layer 3 (Lock Screen)
+                layer_3_encoder_switch_sequence();
+            } else if (current_layer < sizeof(encoder_1_switch_map)/sizeof(encoder_1_switch_map[0]) && 
+                       encoder_1_switch_map[current_layer] != KC_NO) {
+                register_code(encoder_1_switch_map[current_layer]);
+            }
+            enc_sw_1_pressed = true;
+        }
+    } else if (!current_enc_sw_1_state && enc_sw_1_pressed) {
+        if (current_time - enc_sw_1_debounce_time > 5) { // 5ms debounce
+            if (current_layer != _BASE && current_layer != _LAY_1 && 
+                current_layer != _LAY_2 && current_layer != _LAY_3 && 
+                current_layer < sizeof(encoder_1_switch_map)/sizeof(encoder_1_switch_map[0]) && 
+                encoder_1_switch_map[current_layer] != KC_NO) {
+                unregister_code(encoder_1_switch_map[current_layer]);
+            }
+            enc_sw_1_pressed = false;
+        }
+    } else if (current_enc_sw_1_state != enc_sw_1_pressed) {
+        enc_sw_1_debounce_time = current_time;
     }
 }
 
