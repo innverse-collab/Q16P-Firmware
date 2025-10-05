@@ -71,7 +71,7 @@ void keyboard_post_init_user(void) {
     setPinOutput(LED2_PIN);
     setPinOutput(LED3_PIN);
     setPinOutput(LED4_PIN);
-    writePinLow(LED1_PIN);
+    writePinHigh(LED1_PIN);
     writePinLow(LED2_PIN);
     writePinLow(LED3_PIN);
     writePinLow(LED4_PIN);
