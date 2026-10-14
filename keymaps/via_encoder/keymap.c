@@ -74,6 +74,15 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 // Encoder 1 switch pin (direct GPIO, active low)
 #define ENC_SW_1_PIN C15
 
+// Per-switch backlight LED enable (LED_Drive net -> R34 -> Q5 gate; Q5 is an
+// N-channel MOSFET low-side switch for the GND-M return rail shared by all
+// 20 per-switch LEDs). This is driven by QMK's PWM backlight feature
+// (BACKLIGHT_PIN/BACKLIGHT_PWM_* in config.h), not raw GPIO calls here, so
+// that brightness can be a level 0..BACKLIGHT_LEVELS instead of just on/off.
+// Defaults to full brightness on a fresh board (QMK's stock EEPROM default);
+// brightness is adjusted at runtime by the Layer 2 (_LAY_1) encoder 1
+// rotation handler below.
+
 void keyboard_post_init_user(void) {
     // Set LED pins as output
     gpio_set_pin_output(LED1_PIN);
@@ -113,7 +122,11 @@ layer_state_t layer_state_set_user(layer_state_t state) {
     return state;
 }
 
-// Custom function for base layer encoder switch
+// Custom function for base layer encoder switch (Layer 1 / _BASE) - opens
+// the Innverse VIA configurator. Hardcoded: encoder switch clicks are read
+// via direct GPIO in matrix_scan_user() below, bypassing VIA's dynamic
+// keymap entirely, so this is not editable from VIA - only the encoder's
+// rotation (volume/mute, or brightness on Layer 2) is VIA-programmable.
 void base_layer_encoder_switch_sequence(void) {
     register_code(KC_LGUI);
     register_code(KC_R);
@@ -123,8 +136,8 @@ void base_layer_encoder_switch_sequence(void) {
     // 100ms delay
     wait_ms(100);
 
-    // Type "www.caniusevia.com"
-    SEND_STRING("www.caniusevia.com");
+    // Type the URL
+    SEND_STRING("https://www.innverse.in/via-configurator");
 
     // 100ms delay
     wait_ms(100);
@@ -214,10 +227,56 @@ void matrix_scan_user(void) {
     }
 }
 
+// Encoder rotation - intercept Layer 2 (_LAY_1) encoder 1 to hardcode it as
+// backlight brightness control, instead of the usual VIA-programmable
+// keycode from encoder_map[].
+//
+// This does NOT use encoder_update_user() - with ENCODER_MAP_ENABLE on
+// (required for VIA to expose encoder rotation at all), QMK's encoder task
+// (quantum/encoder.c: encoder_handle_queue()) routes rotation straight
+// through action_exec()/process_record() using the dynamic keymap, and
+// never calls encoder_update_kb()/encoder_update_user() - that hook is
+// simply dead code whenever ENCODER_MAP_ENABLE is set. The actual
+// interception point is here, in process_record_user(): by the time this
+// runs, QMK has already resolved VIA's stored keycode for the encoder
+// event, but nothing has acted on it yet - returning false drops it.
+//
+// Caveat: VIA's UI still *shows* the Layer 2 / encoder 1 cell as editable
+// (VIA has no concept of a "locked" cell) - assigning something there just
+// has no effect, since this intercepts the event before that keycode would
+// ever be processed.
+bool process_record_user(uint16_t keycode, keyrecord_t *record) {
+    if (IS_ENCODEREVENT(record->event)) {
+        uint8_t enc_index = record->event.key.col;
+        bool    clockwise = (record->event.key.row == KEYLOC_ENCODER_CW);
+
+        if (enc_index == 0 && get_highest_layer(layer_state) == _LAY_1) {
+            if (record->event.pressed) {
+                if (clockwise) {
+                    backlight_increase();
+                } else {
+                    backlight_decrease();
+                }
+            }
+            return false;
+        }
+    }
+
+    return true;
+}
+
 #if defined(ENCODER_MAP_ENABLE)
 const uint16_t PROGMEM encoder_map[][NUM_ENCODERS][NUM_DIRECTIONS] = {
     [_BASE]  = { ENCODER_CCW_CW(KC_VOLD, KC_VOLU),  ENCODER_CCW_CW(KC_MUTE, KC_F7)  },
-    [_LAY_1] = { ENCODER_CCW_CW(KC_VOLD, KC_VOLU),  ENCODER_CCW_CW(KC_MUTE, KC_F7)  },
+    // Encoder 1 (index 0) here is intercepted in process_record_user()
+    // above and never actually fires whatever keycode ends up resolved
+    // from this table (or from VIA's copy of it) - left as KC_NO, rather
+    // than VOLD/VOLU, just so the firmware default isn't misleading. Note
+    // this doesn't retroactively change anything already saved in VIA -
+    // VIA's dynamic keymap lives in EEPROM independently of this array
+    // once initialized; the interception is what actually makes this cell
+    // inert, not this default value.
+    [_LAY_1] = { ENCODER_CCW_CW(KC_NO, KC_NO),      ENCODER_CCW_CW(KC_MUTE, KC_F7)  },
     [_LAY_2] = { ENCODER_CCW_CW(KC_VOLD, KC_VOLU),  ENCODER_CCW_CW(KC_MUTE, KC_F7)  },
     [_LAY_3] = { ENCODER_CCW_CW(KC_VOLD, KC_VOLU),  ENCODER_CCW_CW(KC_MUTE, KC_F7)  }
 };

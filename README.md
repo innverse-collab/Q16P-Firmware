@@ -72,14 +72,59 @@ MCU. Both are simply omitted here rather than faked:
   no-connect - only encoder 1's switch (ENC_SW_1 / PC15) is wired. Encoder
   2 still works for rotation (volume/mute), just not its click.
 
+## What's and isn't VIA-programmable
+
+- **Encoder 1's switch (click) is never VIA-programmable, on any layer.**
+  It's read via direct GPIO in `matrix_scan_user()`, bypassing VIA's
+  dynamic keymap entirely - the base-layer click opens the Innverse VIA
+  configurator (`https://www.innverse.in/via-configurator`), and the other
+  three layers run their own hardcoded sequences (undo/redo/lock). None of
+  this shows up in VIA, by design.
+- **Encoder rotation is normally VIA-programmable** (that's what
+  `encoder_map[]` + `ENCODER_MAP_ENABLE` give you) - **except** Layer 2
+  (`_LAY_1`) encoder 1, which is hardcoded to backlight brightness (see
+  below). VIA's UI will still show that one cell as an editable keycode
+  (VIA has no "locked cell" concept), but whatever you assign there is
+  silently ignored - `process_record_user()` in
+  `keymaps/via_encoder/keymap.c` intercepts the encoder event and returns
+  `false` before VIA's assigned keycode is acted on. Every other
+  layer/encoder combination behaves normally.
+
+  This is **not** done via `encoder_update_user()`, despite that looking
+  like the obvious hook - with `ENCODER_MAP_ENABLE` on (required for VIA to
+  expose rotation at all), QMK's encoder task
+  (`quantum/encoder.c:encoder_handle_queue()`) routes rotation straight
+  through `action_exec()`/`process_record()` using the dynamic keymap, and
+  never calls `encoder_update_kb()`/`encoder_update_user()` - that hook is
+  simply dead code whenever `ENCODER_MAP_ENABLE` is set. First attempt at
+  this used `encoder_update_user()` and silently did nothing on real
+  hardware (brightness never changed, volume kept working) until this was
+  traced down to that QMK behavior.
+
+## Backlight (added beyond the AtMega32u4 port - new for this PCB)
+
+- **PA8 (LED_Drive)** gates Q5, an N-channel MOSFET low-side switch for the
+  `GND-M` return rail shared by all 20 per-switch backlight LEDs (each wired
+  `+5V -> 1k -> LED -> GND-M`). Active HIGH - same convention as the Mode
+  LEDs.
+- Driven by QMK's built-in PWM backlight feature rather than raw GPIO: PA8
+  is TIM1_CH1 on the STM32F103, so `BACKLIGHT_ENABLE = yes` (`rules.mk`) +
+  `BACKLIGHT_PIN`/`BACKLIGHT_PWM_DRIVER`/`BACKLIGHT_PWM_CHANNEL` (`config.h`)
+  + `STM32_PWM_USE_TIM1` (`mcuconf.h`) + `HAL_USE_PWM` (`halconf.h`) give a
+  real dimmable backlight instead of on/off. Defaults to full brightness on
+  a fresh board (QMK's own stock EEPROM default), then persists whatever
+  level you leave it at.
+- **Brightness control is hardcoded to Layer 2 (`_LAY_1`) encoder 1
+  rotation**, via `encoder_update_user()` in
+  `keymaps/via_encoder/keymap.c`. This intentionally bypasses
+  `encoder_map[]`/VIA for that one layer+encoder combination - see the
+  comment there for why, and the VIA caveat below.
+
 ## Not used by this firmware (exists on the PCB, available later)
 
 - **PC13** - green status LED (D6), driven directly through a 1k resistor,
   active-low (same convention as the LED in `QMK_3_keys_STM32`). Not
   referenced by the AtMega32u4 source, so left untouched here.
-- **PA8 (LED_Drive)** - gates a transistor (Q5) that enables the 20
-  per-switch backlight LEDs as a group. No equivalent in the AtMega32u4
-  firmware. Available for a future backlight feature.
 
 ## Build
 
@@ -95,7 +140,7 @@ qmk compile -kb q16p_stm32_macropad -km via_encoder
 ```
 
 Verified in this repo's `/root/qmk_firmware` checkout: both `default` and
-`via_encoder` keymaps compile clean (`via_encoder` -> 31218 bytes, well
+`via_encoder` keymaps compile clean (`via_encoder` -> 32782 bytes, well
 under the 64KB flash budget).
 
 ## Flash

@@ -9,3 +9,7 @@
 
 #undef STM32_HSECLK
 #define STM32_HSECLK 8000000
+
+// PA8 (backlight/LED_Drive) is TIM1_CH1 - enable TIM1 for PWM backlight.
+#undef STM32_PWM_USE_TIM1
+#define STM32_PWM_USE_TIM1 TRUE
