@@ -1,5 +1,17 @@
 // Copyright 2023 QMK
 // SPDX-License-Identifier: GPL-2.0-or-later
+//
+// Ported from Q16P-Firmware-AtMega32u4/keymaps/via_encoder to the
+// Macropad_4x4_stm32 (STM32F103C8) PCB. Keymap/layer/encoder logic is
+// unchanged from the AtMega32u4 source - only GPIO pin names were remapped
+// to match the new schematic. Two things present on the AtMega32u4 board
+// have no equivalent pin on this PCB and were therefore dropped rather than
+// silently faked:
+//   - SPACEBAR_PIN (F7 on AtMega32u4): this PCB's Switch.kicad_sch has no
+//     21st direct-GPIO switch outside the 4x5 (20-key) matrix.
+//   - ENC_SW_2_PIN (F0 on AtMega32u4): encoder 2's switch (SW3, pin S1) is
+//     explicitly marked no-connect on this schematic; only encoder 1's
+//     switch (ENC_SW_1 / PC15) is wired.
 
 #include QMK_KEYBOARD_H
 
@@ -15,7 +27,7 @@ enum layers {
 const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
     /*
      * ┌───┬───┬───┬───┬───┐
-     * │   │   │   │   │   │  (Spacebar handled separately via PF7)
+     * │   │   │   │   │   │
      * │ / │ 7 │ 8 │ 9 │L0 │
      * │ * │ 4 │ 5 │ 6 │L1 │
      * │ - │ 1 │ 2 │ 3 │L2 │
@@ -52,57 +64,50 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 };
 
 
-// LED pins
-#define LED1_PIN F1
-#define LED2_PIN F4
-#define LED3_PIN F5
-#define LED4_PIN F6
+// LED pins (layer indicators - Mode_1..Mode_4 nets, driven through
+// MMBT2222 transistors, active HIGH)
+#define LED1_PIN B15  // Mode_1
+#define LED2_PIN B14  // Mode_2
+#define LED3_PIN B13  // Mode_3
+#define LED4_PIN B12  // Mode_4
 
-// Spacebar pin (direct GPIO)
-#define SPACEBAR_PIN F7
-
-// Encoder switch pins (direct GPIO)
-#define ENC_SW_1_PIN D6
-#define ENC_SW_2_PIN F0
+// Encoder 1 switch pin (direct GPIO, active low)
+#define ENC_SW_1_PIN C15
 
 void keyboard_post_init_user(void) {
     // Set LED pins as output
-    setPinOutput(LED1_PIN);
-    setPinOutput(LED2_PIN);
-    setPinOutput(LED3_PIN);
-    setPinOutput(LED4_PIN);
-    writePinHigh(LED1_PIN);
-    writePinLow(LED2_PIN);
-    writePinLow(LED3_PIN);
-    writePinLow(LED4_PIN);
-    
-    // Set spacebar pin as input (external pulldown resistor)
-    setPinInput(SPACEBAR_PIN);
-    
-    // Set encoder switch pins as input with pullup (active low)
-    setPinInputHigh(ENC_SW_1_PIN);
-    setPinInputHigh(ENC_SW_2_PIN);
+    gpio_set_pin_output(LED1_PIN);
+    gpio_set_pin_output(LED2_PIN);
+    gpio_set_pin_output(LED3_PIN);
+    gpio_set_pin_output(LED4_PIN);
+    gpio_write_pin_high(LED1_PIN);
+    gpio_write_pin_low(LED2_PIN);
+    gpio_write_pin_low(LED3_PIN);
+    gpio_write_pin_low(LED4_PIN);
+
+    // Set encoder 1 switch pin as input with pullup (active low)
+    gpio_set_pin_input_high(ENC_SW_1_PIN);
 }
 
 layer_state_t layer_state_set_user(layer_state_t state) {
     // Turn off LEDs first
-    writePinLow(LED1_PIN);
-    writePinLow(LED2_PIN);
-    writePinLow(LED3_PIN);
-    writePinLow(LED4_PIN);
+    gpio_write_pin_low(LED1_PIN);
+    gpio_write_pin_low(LED2_PIN);
+    gpio_write_pin_low(LED3_PIN);
+    gpio_write_pin_low(LED4_PIN);
 
     switch (get_highest_layer(state)) {
         case _BASE:
-            writePinHigh(LED1_PIN);  // LED1 on for base
+            gpio_write_pin_high(LED1_PIN);  // LED1 on for base
             break;
         case _LAY_1:
-            writePinHigh(LED2_PIN);  // LED2 on for Layer 1
+            gpio_write_pin_high(LED2_PIN);  // LED2 on for Layer 1
             break;
         case _LAY_2:
-            writePinHigh(LED3_PIN);  // LED3 on for Layer 1
+            gpio_write_pin_high(LED3_PIN);  // LED3 on for Layer 1
             break;
         case _LAY_3:
-            writePinHigh(LED4_PIN);  // LED3 on for Layer 1
+            gpio_write_pin_high(LED4_PIN);  // LED3 on for Layer 1
             break;
     }
     return state;
@@ -114,16 +119,16 @@ void base_layer_encoder_switch_sequence(void) {
     register_code(KC_R);
     unregister_code(KC_R);
     unregister_code(KC_LGUI);
-    
+
     // 100ms delay
     wait_ms(100);
-    
+
     // Type "www.caniusevia.com"
     SEND_STRING("www.caniusevia.com");
-    
+
     // 100ms delay
     wait_ms(100);
-    
+
     // Press Enter
     register_code(KC_ENT);
     unregister_code(KC_ENT);
@@ -161,37 +166,19 @@ const uint16_t PROGMEM encoder_1_switch_map[] = {
     [_LAY_3] = KC_NO    // Custom sequence for layer 3 (handled separately) Lock Screen
 };
 
-// Spacebar and encoder 1 switch handling - override matrix scan
+// Encoder 1 switch handling - override matrix scan
 void matrix_scan_user(void) {
-    static bool spacebar_pressed = false;
     static bool enc_sw_1_pressed = false;
-    static uint32_t spacebar_debounce_time = 0;
     static uint32_t enc_sw_1_debounce_time = 0;
-    
-    // Spacebar handling (active HIGH - pulldown resistor) with debouncing
-    bool current_spacebar_state = readPin(SPACEBAR_PIN);
+
     uint32_t current_time = timer_read32();
-    
-    if (current_spacebar_state && !spacebar_pressed) {
-        if (current_time - spacebar_debounce_time > 5) { // 5ms debounce
-            register_code(KC_SPC);
-            spacebar_pressed = true;
-        }
-    } else if (!current_spacebar_state && spacebar_pressed) {
-        if (current_time - spacebar_debounce_time > 5) { // 5ms debounce
-            unregister_code(KC_SPC);
-            spacebar_pressed = false;
-        }
-    } else if (current_spacebar_state != spacebar_pressed) {
-        spacebar_debounce_time = current_time;
-    }
-    
+
     // Get current layer for encoder switch mapping
     uint8_t current_layer = get_highest_layer(layer_state);
-    
+
     // Encoder 1 switch handling (active LOW - pullup resistor) with debouncing
-    bool current_enc_sw_1_state = !readPin(ENC_SW_1_PIN);
-    
+    bool current_enc_sw_1_state = !gpio_read_pin(ENC_SW_1_PIN);
+
     if (current_enc_sw_1_state && !enc_sw_1_pressed) {
         if (current_time - enc_sw_1_debounce_time > 5) { // 5ms debounce
             if (current_layer == _BASE) {
@@ -206,7 +193,7 @@ void matrix_scan_user(void) {
             } else if (current_layer == _LAY_3) {
                 // Execute custom sequence for layer 3 (Lock Screen)
                 layer_3_encoder_switch_sequence();
-            } else if (current_layer < sizeof(encoder_1_switch_map)/sizeof(encoder_1_switch_map[0]) && 
+            } else if (current_layer < sizeof(encoder_1_switch_map)/sizeof(encoder_1_switch_map[0]) &&
                        encoder_1_switch_map[current_layer] != KC_NO) {
                 register_code(encoder_1_switch_map[current_layer]);
             }
@@ -214,9 +201,9 @@ void matrix_scan_user(void) {
         }
     } else if (!current_enc_sw_1_state && enc_sw_1_pressed) {
         if (current_time - enc_sw_1_debounce_time > 5) { // 5ms debounce
-            if (current_layer != _BASE && current_layer != _LAY_1 && 
-                current_layer != _LAY_2 && current_layer != _LAY_3 && 
-                current_layer < sizeof(encoder_1_switch_map)/sizeof(encoder_1_switch_map[0]) && 
+            if (current_layer != _BASE && current_layer != _LAY_1 &&
+                current_layer != _LAY_2 && current_layer != _LAY_3 &&
+                current_layer < sizeof(encoder_1_switch_map)/sizeof(encoder_1_switch_map[0]) &&
                 encoder_1_switch_map[current_layer] != KC_NO) {
                 unregister_code(encoder_1_switch_map[current_layer]);
             }

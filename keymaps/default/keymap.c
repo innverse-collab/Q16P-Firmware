@@ -16,7 +16,6 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
  * └───┴───┴───┴───┴───┘
  *
  * (where XY = row,column in the matrix)
- * (Spacebar handled separately via PF7)
  */
     [0] = LAYOUT(
         KC_NO,   KC_NO,   KC_NO,   KC_NO, KC_NO,

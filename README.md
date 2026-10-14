@@ -1,89 +1,109 @@
-# Macropad
+# Q16P STM32 - 4x5 Macropad (ported from Q16P-Firmware-AtMega32u4)
 
-A custom 4x5 mechanical macropad with dual rotary encoders, built using QMK firmware. This macropad features a calculator-style layout with multiple layers for different functions.
+Direct port of [Q16P-Firmware-AtMega32u4](../Q16P-Firmware-AtMega32u4) to the
+STM32F103C8 "Macropad_4x4_stm32" PCB. Keymap, layers, encoder behavior and
+LED logic are unchanged from the AtMega32u4 source - only pin names were
+remapped to this schematic. No new features, no optimizations (planned for
+later).
 
-## Features
+Pin assignments below were read directly off `Macropad_4x4_stm32.pdf`
+(MCU.kicad_sch / Switch.kicad_sch), not assumed.
 
-- **4x5 Key Matrix**: 20 programmable keys arranged in a 4x5 grid
-- **Dual Rotary Encoders**: Two encoders with click functionality and separate switch buttons
-- **Multi-layer Support**: 4 different layers for various functions
-- **LED Indicators**: 4 LEDs to indicate active layer
-- **VIA Support**: Compatible with VIA for easy keymap configuration
-- **Spacebar**: Dedicated spacebar key (handled via direct GPIO)
-- **Dynamic Macros**: Support for up to 128 dynamic macros
+Verified by compiling both keymaps (`default`, `via_encoder`) against the
+`qmk_firmware` checkout at `/root/qmk_firmware` - both build clean.
 
-## Hardware Specifications
+One mechanical (non-behavioral) change was required to make it compile: the
+AtMega32u4 source calls the old camelCase GPIO API
+(`setPinOutput`/`writePinHigh`/`writePinLow`/`setPinInputHigh`/`readPin`).
+That API was renamed repo-wide in QMK in Feb 2024
+(`docs/ChangeLog/20240225.md`) to `gpio_set_pin_output` /
+`gpio_write_pin_high` / `gpio_write_pin_low` / `gpio_set_pin_input_high` /
+`gpio_read_pin`, and the old names no longer exist at all in this
+`qmk_firmware` checkout (not even for AVR) - so the AtMega32u4 source as
+currently written would also fail to compile against this same
+`qmk_firmware` checkout. This STM32 port uses the current `gpio_*` names;
+worth knowing if the AtMega32u4 firmware ever needs a rebuild here too.
 
-- **Controller**: Pro Micro compatible
-- **Matrix**: 4 rows × 5 columns (COL2ROW diode direction)
-- **Encoders**: 2 rotary encoders with 4-step resolution
-- **Encoder Switches**: 2 separate push buttons (one per encoder)
-- **LEDs**: 4 status LEDs for layer indication
-- **USB**: USB-C connector
+## Pin map (AtMega32u4 -> STM32F103)
 
-### Pin Assignments
+| Function      | AtMega32u4 | STM32F103 (this PCB) | Net label   |
+|---------------|------------|-----------------------|-------------|
+| Matrix col 0  | B4         | B1                    | CL_1        |
+| Matrix col 1  | B5         | B0                    | CL_2        |
+| Matrix col 2  | B6         | A2                    | CL_3        |
+| Matrix col 3  | B7         | A1                    | CL_4        |
+| Matrix col 4  | C6         | A0                    | CL_5        |
+| Matrix row 0  | C7         | A6                    | RW_1        |
+| Matrix row 1  | D0         | A5                    | RW_2        |
+| Matrix row 2  | D1         | A4                    | RW_3        |
+| Matrix row 3  | D2         | A3                    | RW_4        |
+| Encoder 1 A   | D3         | B9                    | ENC_A_1     |
+| Encoder 1 B   | D4         | C14                   | ENC_B_1     |
+| Encoder 1 SW  | D6         | C15                   | ENC_SW_1    |
+| Encoder 2 A   | D7         | B7                    | ENC_A_2     |
+| Encoder 2 B   | E6         | B8                    | ENC_B_2     |
+| LED 1 (base)  | F1         | B15                   | Mode_1      |
+| LED 2 (lay 1) | F4         | B14                   | Mode_2      |
+| LED 3 (lay 2) | F5         | B13                   | Mode_3      |
+| LED 4 (lay 3) | F6         | B12                   | Mode_4      |
 
-#### Matrix Pins
-- **Columns**: B4, B5, B6, B7, C6
-- **Rows**: C7, D0, D1, D2
+Diode direction: COL2ROW on both boards (verified against the diode
+orientation in `Switch.kicad_sch`).
 
-#### Encoder Pins
-- **Encoder 1**: D3 (A), D4 (B), D6 (Switch)
-- **Encoder 2**: D7 (A), E6 (B), F0 (Switch)
+Matrix column/row order (CL_1→col0 ... CL_5→col4, RW_1→row0 ... RW_4→row3)
+is assumed from the net numbering since the physical silkscreen wasn't
+available for cross-check. If the ported keymap comes out mirrored
+left-right or top-to-bottom on the real board, it's this ordering that
+needs flipping in `keyboard.json`, not the keymap itself.
 
-#### LED Pins
-- **LED 1**: F1 (Base layer indicator)
-- **LED 2**: F4 (Layer 1 indicator)
-- **LED 3**: F5 (Layer 2 indicator)
-- **LED 4**: F6 (Layer 3 indicator)
+## Hardware differences found during the port (not fixable in firmware)
 
-#### Special Pins
-- **Spacebar**: F7 (Direct GPIO with pulldown resistor)
+The AtMega32u4 board has two inputs that this PCB does not route to the
+MCU. Both are simply omitted here rather than faked:
 
-## Keymaps
+- **Spacebar.** AtMega32u4 firmware reads a dedicated spacebar button via
+  direct GPIO (F7), outside the 20-key matrix. `Switch.kicad_sch` on this
+  PCB only has the 20 matrix switches (SW5-SW24) - there is no 21st
+  direct-wired switch. If this PCB is meant to have a spacebar key, it
+  needs a schematic/PCB revision; this firmware can't add a key where no
+  switch exists.
+- **Encoder 2 switch.** AtMega32u4 reads encoder 2's push switch via F0.
+  On this schematic, encoder 2 (SW3) pin S1 is explicitly marked
+  no-connect - only encoder 1's switch (ENC_SW_1 / PC15) is wired. Encoder
+  2 still works for rotation (volume/mute), just not its click.
 
-### Default Keymap
-The default keymap provides a basic calculator layout with number keys 1-9.
+## Not used by this firmware (exists on the PCB, available later)
 
-### Via Encoder Keymap (Recommended)
-The via_encoder keymap includes 4 layers with comprehensive functionality:
+- **PC13** - green status LED (D6), driven directly through a 1k resistor,
+  active-low (same convention as the LED in `QMK_3_keys_STM32`). Not
+  referenced by the AtMega32u4 source, so left untouched here.
+- **PA8 (LED_Drive)** - gates a transistor (Q5) that enables the 20
+  per-switch backlight LEDs as a group. No equivalent in the AtMega32u4
+  firmware. Available for a future backlight feature.
 
-### Encoder Functions
-- **Encoder 1**: Volume down/up (all layers)
-- **Encoder 2**: Mute/F7 (all layers)
-- **Encoder 1 Switch**: Enter (separate button on encoder 1)
+## Build
 
-## Building and Flashing
+Copy this into `qmk_firmware/keyboards/` under its own name - **not**
+`q16p_stm32`, which `qmk_firmware/keyboards/` already has (that's the
+earlier `QMK_3_keys_STM32` 3-button prototype; copying on top of it would
+overwrite it):
 
-### Prerequisites
-- [QMK Toolbox](https://github.com/qmk/qmk_toolbox) or [QMK CLI](https://docs.qmk.fm/#/newbs_getting_started)
-- Compatible microcontroller (Pro Micro or similar)
-
-### Build Instructions
-
-1. Clone the QMK firmware repository:
 ```bash
-git clone https://github.com/qmk/qmk_firmware.git
-cd qmk_firmware
+cp -r Q16P-Firmware-STM32 ~/qmk_firmware/keyboards/q16p_stm32_macropad
+cd ~/qmk_firmware
+qmk compile -kb q16p_stm32_macropad -km via_encoder
 ```
 
-2. Copy this keymap to the QMK directory:
+Verified in this repo's `/root/qmk_firmware` checkout: both `default` and
+`via_encoder` keymaps compile clean (`via_encoder` -> 31218 bytes, well
+under the 64KB flash budget).
+
+## Flash
+
+No bootloader - flash directly over SWD at 0x08000000 (see `rules.mk` /
+`ld/STM32F103xB_no_boot.ld`), same as the already-tested USB bring-up
+binary for this PCB:
+
 ```bash
-cp -r /path/to/this/project /path/to/qmk_firmware/keyboards/manan_5x4_v1/
+st-flash write .build/q16p_stm32_macropad_via_encoder.bin 0x08000000
 ```
-
-3. Build the firmware:
-```bash
-qmk compile -kb manan_5x4_v1 -km via_encoder
-```
-
-4. Flash the firmware using QMK Toolbox or CLI:
-```bash
-qmk flash -kb manan_5x4_v1 -km via_encoder
-```
-
-### VIA Configuration
-
-1. Install [VIA](https://caniusevia.com/)
-2. Load the `via.json` file in VIA
-3. Configure your keymap through the VIA interface
