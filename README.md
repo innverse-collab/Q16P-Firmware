@@ -78,8 +78,35 @@ MCU. Both are simply omitted here rather than faked:
   It's read via direct GPIO in `matrix_scan_user()`, bypassing VIA's
   dynamic keymap entirely - the base-layer click opens the Innverse VIA
   configurator (`https://www.innverse.in/via-configurator`), and the other
-  three layers run their own hardcoded sequences (undo/redo/lock). None of
-  this shows up in VIA, by design.
+  three layers run their own hardcoded sequences - Layer 2: screenshot
+  (area/region select), Layer 3: open terminal, Layer 4: lock screen. None
+  of this shows up in VIA, by design. This isn't a config limitation that could
+  be lifted - VIA's encoder configuration (`encoder_map[]` +
+  `ENCODER_MAP_ENABLE`) only ever exposes rotation (CW/CCW), never a click;
+  making the click itself VIA-editable would require wiring it into the
+  real key matrix (as a "direct pin" alongside the diode matrix, or an
+  extra matrix position), which this PCB's encoder switch currently isn't.
+- **All four of those hardcoded sequences are host-OS-aware**
+  (`OS_DETECTION_ENABLE`, `rules.mk`): each branches on
+  `detected_host_os()` and sends the right combo for Windows, macOS, or
+  Linux - e.g. the base-layer click uses Win+R on Windows, Cmd+Space
+  (Spotlight) on macOS, and Alt+F2 + `xdg-open <url>` on Linux. OS
+  detection is a best-guess heuristic based on USB enumeration quirks
+  (QMK's own docs: "shouldn't be relied on for critical functionality" -
+  it can misread Linux as macOS, especially behind hubs/KVMs), so
+  `OS_UNSURE` and anything unexpected fall back to the Windows sequence.
+
+  | Layer | Action | Windows | macOS | Linux |
+  |---|---|---|---|---|
+  | 1 (base) | Open configurator | Win+R -> type URL -> Enter | Cmd+Space -> type URL -> Enter | Alt+F2 -> `xdg-open <url>` -> Enter |
+  | 2 (`_LAY_1`) | Screenshot | Win+Shift+S | Cmd+Shift+4 | Shift+PrtScn (GNOME's area-select binding) |
+  | 3 (`_LAY_2`) | Open terminal | Win+R -> type `cmd` -> Enter | Cmd+Space -> type `Terminal` -> Enter | Ctrl+Alt+T (direct binding, no launcher needed) |
+  | 4 (`_LAY_3`) | Lock screen | Win+L | Ctrl+Cmd+Q | Win+L (shares Windows' GUI+L binding) |
+
+  Windows types `cmd` rather than `wt` for the terminal, since Command
+  Prompt is guaranteed present even without Windows Terminal installed.
+  Linux's terminal shortcut is a real keybinding rather than a
+  launcher-plus-typing dance, so it has no settle delay before it.
 - **Encoder rotation is normally VIA-programmable** (that's what
   `encoder_map[]` + `ENCODER_MAP_ENABLE` give you) - **except** Layer 2
   (`_LAY_1`) encoder 1, which is hardcoded to backlight brightness (see
@@ -115,10 +142,10 @@ MCU. Both are simply omitted here rather than faked:
   a fresh board (QMK's own stock EEPROM default), then persists whatever
   level you leave it at.
 - **Brightness control is hardcoded to Layer 2 (`_LAY_1`) encoder 1
-  rotation**, via `encoder_update_user()` in
+  rotation**, via `process_record_user()` in
   `keymaps/via_encoder/keymap.c`. This intentionally bypasses
-  `encoder_map[]`/VIA for that one layer+encoder combination - see the
-  comment there for why, and the VIA caveat below.
+  `encoder_map[]`/VIA for that one layer+encoder combination - see
+  "What's and isn't VIA-programmable" above for why.
 
 ## Not used by this firmware (exists on the PCB, available later)
 
@@ -145,8 +172,14 @@ under the 64KB flash budget).
 
 ## Flash
 
-No bootloader - flash directly over SWD at 0x08000000 (see `rules.mk` /
-`ld/STM32F103xB_no_boot.ld`), same as the already-tested USB bring-up
+This board is bare silicon with no bootloader - firmware is flashed
+directly over SWD at 0x08000000, the actual start of flash (see
+`ld/STM32F103xB_no_boot.ld`, which maps the full 64K from 0x08000000 rather
+than assuming a bootloader-reserved offset). `rules.mk` sets
+`BOOTLOADER = custom`, which is QMK's mechanism for boards with no
+bootloader to jump to - `platforms/chibios/bootloaders/custom.c` already
+provides no-op stubs for `bootloader_jump()`/`mcu_reset()` so the build
+doesn't need a real one. Same setup as the already-tested USB bring-up
 binary for this PCB:
 
 ```bash

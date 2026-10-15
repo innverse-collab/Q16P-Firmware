@@ -1,17 +1,7 @@
 // Copyright 2023 QMK
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// Ported from Q16P-Firmware-AtMega32u4/keymaps/via_encoder to the
-// Macropad_4x4_stm32 (STM32F103C8) PCB. Keymap/layer/encoder logic is
-// unchanged from the AtMega32u4 source - only GPIO pin names were remapped
-// to match the new schematic. Two things present on the AtMega32u4 board
-// have no equivalent pin on this PCB and were therefore dropped rather than
-// silently faked:
-//   - SPACEBAR_PIN (F7 on AtMega32u4): this PCB's Switch.kicad_sch has no
-//     21st direct-GPIO switch outside the 4x5 (20-key) matrix.
-//   - ENC_SW_2_PIN (F0 on AtMega32u4): encoder 2's switch (SW3, pin S1) is
-//     explicitly marked no-connect on this schematic; only encoder 1's
-//     switch (ENC_SW_1 / PC15) is wired.
+// Ported from Q16P-Firmware-AtMega32u4/keymaps/via_encoder - see README.md for the pin map and hardware differences.
 
 #include QMK_KEYBOARD_H
 
@@ -64,8 +54,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 };
 
 
-// LED pins (layer indicators - Mode_1..Mode_4 nets, driven through
-// MMBT2222 transistors, active HIGH)
+// LED pins (layer indicators, Mode_1..Mode_4 nets, active HIGH)
 #define LED1_PIN B15  // Mode_1
 #define LED2_PIN B14  // Mode_2
 #define LED3_PIN B13  // Mode_3
@@ -74,14 +63,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 // Encoder 1 switch pin (direct GPIO, active low)
 #define ENC_SW_1_PIN C15
 
-// Per-switch backlight LED enable (LED_Drive net -> R34 -> Q5 gate; Q5 is an
-// N-channel MOSFET low-side switch for the GND-M return rail shared by all
-// 20 per-switch LEDs). This is driven by QMK's PWM backlight feature
-// (BACKLIGHT_PIN/BACKLIGHT_PWM_* in config.h), not raw GPIO calls here, so
-// that brightness can be a level 0..BACKLIGHT_LEVELS instead of just on/off.
-// Defaults to full brightness on a fresh board (QMK's stock EEPROM default);
-// brightness is adjusted at runtime by the Layer 2 (_LAY_1) encoder 1
-// rotation handler below.
+// Per-switch backlight (LED_Drive/PA8) - PWM backlight feature, see README
 
 void keyboard_post_init_user(void) {
     // Set LED pins as output
@@ -113,69 +95,169 @@ layer_state_t layer_state_set_user(layer_state_t state) {
             gpio_write_pin_high(LED2_PIN);  // LED2 on for Layer 1
             break;
         case _LAY_2:
-            gpio_write_pin_high(LED3_PIN);  // LED3 on for Layer 1
+            gpio_write_pin_high(LED3_PIN);  // LED3 on for Layer 2
             break;
         case _LAY_3:
-            gpio_write_pin_high(LED4_PIN);  // LED3 on for Layer 1
+            gpio_write_pin_high(LED4_PIN);  // LED4 on for Layer 3
             break;
     }
     return state;
 }
 
-// Custom function for base layer encoder switch (Layer 1 / _BASE) - opens
-// the Innverse VIA configurator. Hardcoded: encoder switch clicks are read
-// via direct GPIO in matrix_scan_user() below, bypassing VIA's dynamic
-// keymap entirely, so this is not editable from VIA - only the encoder's
-// rotation (volume/mute, or brightness on Layer 2) is VIA-programmable.
+// Base layer (_BASE) encoder click - opens the Innverse VIA configurator. OS-aware (see README); not VIA-programmable.
 void base_layer_encoder_switch_sequence(void) {
-    register_code(KC_LGUI);
-    register_code(KC_R);
-    unregister_code(KC_R);
-    unregister_code(KC_LGUI);
+    switch (detected_host_os()) {
+        case OS_MACOS:
+        case OS_IOS:
+            // Cmd+Space (Spotlight)
+            register_code(KC_LGUI);
+            register_code(KC_SPC);
+            unregister_code(KC_SPC);
+            unregister_code(KC_LGUI);
+            wait_ms(300);
+            SEND_STRING("https://www.innverse.in/via-configurator");
+            wait_ms(100);
+            register_code(KC_ENT);
+            unregister_code(KC_ENT);
+            break;
 
-    // 100ms delay
-    wait_ms(100);
+        case OS_LINUX:
+            // Alt+F2, then xdg-open <url>
+            register_code(KC_LALT);
+            register_code(KC_F2);
+            unregister_code(KC_F2);
+            unregister_code(KC_LALT);
+            wait_ms(250);
+            SEND_STRING("xdg-open https://www.innverse.in/via-configurator");
+            wait_ms(100);
+            register_code(KC_ENT);
+            unregister_code(KC_ENT);
+            break;
 
-    // Type the URL
-    SEND_STRING("https://www.innverse.in/via-configurator");
-
-    // 100ms delay
-    wait_ms(100);
-
-    // Press Enter
-    register_code(KC_ENT);
-    unregister_code(KC_ENT);
+        case OS_WINDOWS:
+        case OS_UNSURE:
+        default:
+            // Win+R (Run dialog)
+            register_code(KC_LGUI);
+            register_code(KC_R);
+            unregister_code(KC_R);
+            unregister_code(KC_LGUI);
+            wait_ms(250);
+            SEND_STRING("https://www.innverse.in/via-configurator");
+            wait_ms(100);
+            register_code(KC_ENT);
+            unregister_code(KC_ENT);
+            break;
+    }
 }
 
-// Custom function for layer 1 encoder switch (Ctrl + Z for UNDO)
+// Layer 2 (_LAY_1) encoder click - screenshot (area/region select). OS-aware (see README).
 void layer_1_encoder_switch_sequence(void) {
-    register_code(KC_LCTL);
-    register_code(KC_Z);
-    unregister_code(KC_Z);
-    unregister_code(KC_LCTL);
+    switch (detected_host_os()) {
+        case OS_MACOS:
+        case OS_IOS:
+            // Cmd+Shift+4
+            register_code(KC_LGUI);
+            register_code(KC_LSFT);
+            register_code(KC_4);
+            unregister_code(KC_4);
+            unregister_code(KC_LSFT);
+            unregister_code(KC_LGUI);
+            break;
+
+        case OS_LINUX:
+            // Shift+PrtScn
+            register_code(KC_LSFT);
+            register_code(KC_PSCR);
+            unregister_code(KC_PSCR);
+            unregister_code(KC_LSFT);
+            break;
+
+        case OS_WINDOWS:
+        case OS_UNSURE:
+        default:
+            // Win+Shift+S
+            register_code(KC_LGUI);
+            register_code(KC_LSFT);
+            register_code(KC_S);
+            unregister_code(KC_S);
+            unregister_code(KC_LSFT);
+            unregister_code(KC_LGUI);
+            break;
+    }
 }
 
-// Custom function for layer 2 encoder switch (Ctrl + Y for REDO)
+// Layer 3 (_LAY_2) encoder click - opens a terminal. OS-aware (see README).
 void layer_2_encoder_switch_sequence(void) {
-    register_code(KC_LCTL);
-    register_code(KC_Y);
-    unregister_code(KC_Y);
-    unregister_code(KC_LCTL);
+    switch (detected_host_os()) {
+        case OS_MACOS:
+        case OS_IOS:
+            register_code(KC_LGUI);
+            register_code(KC_SPC);
+            unregister_code(KC_SPC);
+            unregister_code(KC_LGUI);
+            wait_ms(300);
+            SEND_STRING("Terminal");
+            wait_ms(100);
+            register_code(KC_ENT);
+            unregister_code(KC_ENT);
+            break;
+
+        case OS_LINUX:
+            register_code(KC_LCTL);
+            register_code(KC_LALT);
+            register_code(KC_T);
+            unregister_code(KC_T);
+            unregister_code(KC_LALT);
+            unregister_code(KC_LCTL);
+            break;
+
+        case OS_WINDOWS:
+        case OS_UNSURE:
+        default:
+            register_code(KC_LGUI);
+            register_code(KC_R);
+            unregister_code(KC_R);
+            unregister_code(KC_LGUI);
+            wait_ms(250);
+            SEND_STRING("cmd");
+            wait_ms(100);
+            register_code(KC_ENT);
+            unregister_code(KC_ENT);
+            break;
+    }
 }
 
-// Custom function for layer 3 encoder switch (Windows + L to lock)
+// Layer 4 (_LAY_3) encoder click - locks the screen. OS-aware (see README).
 void layer_3_encoder_switch_sequence(void) {
-    register_code(KC_LGUI);
-    register_code(KC_L);
-    unregister_code(KC_L);
-    unregister_code(KC_LGUI);
+    switch (detected_host_os()) {
+        case OS_MACOS:
+        case OS_IOS:
+            register_code(KC_LCTL);
+            register_code(KC_LGUI);
+            register_code(KC_Q);
+            unregister_code(KC_Q);
+            unregister_code(KC_LGUI);
+            unregister_code(KC_LCTL);
+            break;
+
+        case OS_WINDOWS:
+        case OS_LINUX:
+        case OS_UNSURE:
+        default:
+            register_code(KC_LGUI);
+            register_code(KC_L);
+            unregister_code(KC_L);
+            unregister_code(KC_LGUI);
+            break;
+    }
 }
 
 // Encoder 1 switch mapping - programmable per layer
 const uint16_t PROGMEM encoder_1_switch_map[] = {
     [_BASE]  = KC_NO,   // Custom sequence for base layer (handled separately)
-    [_LAY_1] = KC_NO,   // Custom sequence for layer 1 (handled separately) UNDO
-    [_LAY_2] = KC_NO,   // Custom sequence for layer 2 (handled separately) REDO
+    [_LAY_1] = KC_NO,   // Custom sequence for layer 1 (handled separately) Screenshot
+    [_LAY_2] = KC_NO,   // Custom sequence for layer 2 (handled separately) Open Terminal
     [_LAY_3] = KC_NO    // Custom sequence for layer 3 (handled separately) Lock Screen
 };
 
@@ -198,10 +280,10 @@ void matrix_scan_user(void) {
                 // Execute custom sequence for base layer
                 base_layer_encoder_switch_sequence();
             } else if (current_layer == _LAY_1) {
-                // Execute custom sequence for layer 1 (UNDO)
+                // Execute custom sequence for layer 1 (Screenshot)
                 layer_1_encoder_switch_sequence();
             } else if (current_layer == _LAY_2) {
-                // Execute custom sequence for layer 2 (REDO)
+                // Execute custom sequence for layer 2 (Open Terminal)
                 layer_2_encoder_switch_sequence();
             } else if (current_layer == _LAY_3) {
                 // Execute custom sequence for layer 3 (Lock Screen)
@@ -227,24 +309,7 @@ void matrix_scan_user(void) {
     }
 }
 
-// Encoder rotation - intercept Layer 2 (_LAY_1) encoder 1 to hardcode it as
-// backlight brightness control, instead of the usual VIA-programmable
-// keycode from encoder_map[].
-//
-// This does NOT use encoder_update_user() - with ENCODER_MAP_ENABLE on
-// (required for VIA to expose encoder rotation at all), QMK's encoder task
-// (quantum/encoder.c: encoder_handle_queue()) routes rotation straight
-// through action_exec()/process_record() using the dynamic keymap, and
-// never calls encoder_update_kb()/encoder_update_user() - that hook is
-// simply dead code whenever ENCODER_MAP_ENABLE is set. The actual
-// interception point is here, in process_record_user(): by the time this
-// runs, QMK has already resolved VIA's stored keycode for the encoder
-// event, but nothing has acted on it yet - returning false drops it.
-//
-// Caveat: VIA's UI still *shows* the Layer 2 / encoder 1 cell as editable
-// (VIA has no concept of a "locked" cell) - assigning something there just
-// has no effect, since this intercepts the event before that keycode would
-// ever be processed.
+// Layer 2 (_LAY_1) encoder 1 rotation -> backlight brightness, hardcoded (not VIA-programmable - see README).
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
     if (IS_ENCODEREVENT(record->event)) {
         uint8_t enc_index = record->event.key.col;
@@ -268,15 +333,7 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
 #if defined(ENCODER_MAP_ENABLE)
 const uint16_t PROGMEM encoder_map[][NUM_ENCODERS][NUM_DIRECTIONS] = {
     [_BASE]  = { ENCODER_CCW_CW(KC_VOLD, KC_VOLU),  ENCODER_CCW_CW(KC_MUTE, KC_F7)  },
-    // Encoder 1 (index 0) here is intercepted in process_record_user()
-    // above and never actually fires whatever keycode ends up resolved
-    // from this table (or from VIA's copy of it) - left as KC_NO, rather
-    // than VOLD/VOLU, just so the firmware default isn't misleading. Note
-    // this doesn't retroactively change anything already saved in VIA -
-    // VIA's dynamic keymap lives in EEPROM independently of this array
-    // once initialized; the interception is what actually makes this cell
-    // inert, not this default value.
-    [_LAY_1] = { ENCODER_CCW_CW(KC_NO, KC_NO),      ENCODER_CCW_CW(KC_MUTE, KC_F7)  },
+    [_LAY_1] = { ENCODER_CCW_CW(KC_NO, KC_NO),      ENCODER_CCW_CW(KC_MUTE, KC_F7)  }, // encoder 1 overridden in process_record_user()
     [_LAY_2] = { ENCODER_CCW_CW(KC_VOLD, KC_VOLU),  ENCODER_CCW_CW(KC_MUTE, KC_F7)  },
     [_LAY_3] = { ENCODER_CCW_CW(KC_VOLD, KC_VOLU),  ENCODER_CCW_CW(KC_MUTE, KC_F7)  }
 };
