@@ -228,7 +228,7 @@ qmk compile -kb q16p_stm32_macropad -km via_encoder
 
 Verified against the `qmk_firmware` checkout at `/root/qmk_firmware`: both
 `default` and `via_encoder` keymaps compile clean (`via_encoder` ->
-34002 bytes, well under the 64KB flash budget).
+34018 bytes, well under the 64KB flash budget).
 
 One mechanical (non-behavioral) change was needed versus the AtMega32u4
 source to get it compiling: the AtMega32u4 keymap calls QMK's old camelCase
@@ -250,8 +250,21 @@ than assuming a bootloader-reserved offset). `rules.mk` sets
 jump to - `platforms/chibios/bootloaders/custom.c` provides no-op stubs
 for `bootloader_jump()`/`mcu_reset()` so the build doesn't need a real one.
 
+If you just ran `qmk compile` yourself, the binary is at
+`.build/q16p_stm32_macropad_via_encoder.bin` inside your `qmk_firmware`
+checkout:
+
 ```bash
 st-flash write .build/q16p_stm32_macropad_via_encoder.bin 0x08000000
+```
+
+A ready-to-flash copy is also kept in this repo at
+[`build/q16p_stm32_macropad_via_encoder.bin`](build/q16p_stm32_macropad_via_encoder.bin)
+(no leading dot - this repo's own folder, not `qmk_firmware`'s build
+output):
+
+```bash
+st-flash write build/q16p_stm32_macropad_via_encoder.bin 0x08000000
 ```
 
 ## Repository Layout

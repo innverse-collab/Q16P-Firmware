@@ -313,59 +313,42 @@ void layer_3_encoder_switch_sequence(void) {
     }
 }
 
-// Encoder 1 switch mapping - programmable per layer
-const uint16_t PROGMEM encoder_1_switch_map[] = {
-    [_BASE]  = KC_NO,   // Custom sequence for base layer (handled separately)
-    [_LAY_1] = KC_NO,   // Custom sequence for layer 1 (handled separately) Screenshot
-    [_LAY_2] = KC_NO,   // Custom sequence for layer 2 (handled separately) Open Terminal
-    [_LAY_3] = KC_NO    // Custom sequence for layer 3 (handled separately) Lock Screen
-};
-
-// Encoder 1 switch handling - override matrix scan
+// Encoder 1 switch handling - debounced press edge triggers the per-layer
+// sequence above. enc_sw_1_raw_last/enc_sw_1_last_change track the raw pin
+// for edge detection; enc_sw_1_pressed is the debounced, confirmed state
+// that actually gates firing (and re-arms once the switch is released).
 void matrix_scan_user(void) {
-    static bool enc_sw_1_pressed = false;
-    static uint32_t enc_sw_1_debounce_time = 0;
+    static bool     enc_sw_1_pressed      = false;
+    static bool     enc_sw_1_raw_last     = false;
+    static uint32_t enc_sw_1_last_change  = 0;
 
+    bool     current_raw  = !gpio_read_pin(ENC_SW_1_PIN); // active low
     uint32_t current_time = timer_read32();
 
-    // Get current layer for encoder switch mapping
-    uint8_t current_layer = get_highest_layer(layer_state);
+    if (current_raw != enc_sw_1_raw_last) {
+        enc_sw_1_raw_last    = current_raw;
+        enc_sw_1_last_change = current_time;
+    }
 
-    // Encoder 1 switch handling (active LOW - pullup resistor) with debouncing
-    bool current_enc_sw_1_state = !gpio_read_pin(ENC_SW_1_PIN);
+    if (current_raw != enc_sw_1_pressed && (current_time - enc_sw_1_last_change) > 5) { // 5ms debounce
+        enc_sw_1_pressed = current_raw;
 
-    if (current_enc_sw_1_state && !enc_sw_1_pressed) {
-        if (current_time - enc_sw_1_debounce_time > 5) { // 5ms debounce
-            if (current_layer == _BASE) {
-                // Execute custom sequence for base layer
-                base_layer_encoder_switch_sequence();
-            } else if (current_layer == _LAY_1) {
-                // Execute custom sequence for layer 1 (Screenshot)
-                layer_1_encoder_switch_sequence();
-            } else if (current_layer == _LAY_2) {
-                // Execute custom sequence for layer 2 (Open Terminal)
-                layer_2_encoder_switch_sequence();
-            } else if (current_layer == _LAY_3) {
-                // Execute custom sequence for layer 3 (Lock Screen)
-                layer_3_encoder_switch_sequence();
-            } else if (current_layer < sizeof(encoder_1_switch_map)/sizeof(encoder_1_switch_map[0]) &&
-                       encoder_1_switch_map[current_layer] != KC_NO) {
-                register_code(encoder_1_switch_map[current_layer]);
+        if (enc_sw_1_pressed) {
+            switch (get_highest_layer(layer_state)) {
+                case _BASE:
+                    base_layer_encoder_switch_sequence();
+                    break;
+                case _LAY_1:
+                    layer_1_encoder_switch_sequence();
+                    break;
+                case _LAY_2:
+                    layer_2_encoder_switch_sequence();
+                    break;
+                case _LAY_3:
+                    layer_3_encoder_switch_sequence();
+                    break;
             }
-            enc_sw_1_pressed = true;
         }
-    } else if (!current_enc_sw_1_state && enc_sw_1_pressed) {
-        if (current_time - enc_sw_1_debounce_time > 5) { // 5ms debounce
-            if (current_layer != _BASE && current_layer != _LAY_1 &&
-                current_layer != _LAY_2 && current_layer != _LAY_3 &&
-                current_layer < sizeof(encoder_1_switch_map)/sizeof(encoder_1_switch_map[0]) &&
-                encoder_1_switch_map[current_layer] != KC_NO) {
-                unregister_code(encoder_1_switch_map[current_layer]);
-            }
-            enc_sw_1_pressed = false;
-        }
-    } else if (current_enc_sw_1_state != enc_sw_1_pressed) {
-        enc_sw_1_debounce_time = current_time;
     }
 }
 
@@ -390,11 +373,13 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
     return true;
 }
 
+// Encoder 2 ships blank (KC_NO) on every layer - intentionally left for the
+// user to assign via VIA, rather than hardcoding a rotation action.
 #if defined(ENCODER_MAP_ENABLE)
 const uint16_t PROGMEM encoder_map[][NUM_ENCODERS][NUM_DIRECTIONS] = {
-    [_BASE]  = { ENCODER_CCW_CW(KC_VOLD, KC_VOLU),  ENCODER_CCW_CW(KC_MUTE, KC_F7)  },
-    [_LAY_1] = { ENCODER_CCW_CW(KC_NO, KC_NO),      ENCODER_CCW_CW(KC_MUTE, KC_F7)  }, // encoder 1 overridden in process_record_user()
-    [_LAY_2] = { ENCODER_CCW_CW(KC_VOLD, KC_VOLU),  ENCODER_CCW_CW(KC_MUTE, KC_F7)  },
-    [_LAY_3] = { ENCODER_CCW_CW(KC_VOLD, KC_VOLU),  ENCODER_CCW_CW(KC_MUTE, KC_F7)  }
+    [_BASE]  = { ENCODER_CCW_CW(KC_VOLD, KC_VOLU),  ENCODER_CCW_CW(KC_NO, KC_NO)  },
+    [_LAY_1] = { ENCODER_CCW_CW(KC_NO, KC_NO),      ENCODER_CCW_CW(KC_NO, KC_NO)  }, // encoder 1 overridden in process_record_user()
+    [_LAY_2] = { ENCODER_CCW_CW(KC_VOLD, KC_VOLU),  ENCODER_CCW_CW(KC_NO, KC_NO)  },
+    [_LAY_3] = { ENCODER_CCW_CW(KC_VOLD, KC_VOLU),  ENCODER_CCW_CW(KC_NO, KC_NO)  }
 };
 #endif
