@@ -4,6 +4,7 @@
 // Ported from Q16P-Firmware-AtMega32u4/keymaps/via_encoder - see README.md for the pin map and hardware differences.
 
 #include QMK_KEYBOARD_H
+#include <hal.h>  // raw PWM access for the boot animation's backlight fade
 
 // Define layers
 enum layers {
@@ -65,42 +66,101 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 
 // Per-switch backlight (LED_Drive/PA8) - PWM backlight feature, see README
 
+// Progressive layer indicator - LED count lit = layer number (see README)
+static void set_layer_leds(uint8_t layer) {
+    gpio_write_pin(LED1_PIN, layer >= _BASE);
+    gpio_write_pin(LED2_PIN, layer >= _LAY_1);
+    gpio_write_pin(LED3_PIN, layer >= _LAY_2);
+    gpio_write_pin(LED4_PIN, layer >= _LAY_3);
+}
+
+// Boot animation timing (see README) - total run time RISE_MS + FALL_MS
+#define BOOT_ANIM_RISE_MS        900
+#define BOOT_ANIM_FALL_MS        900
+#define BOOT_ANIM_LED_STAGGER_MS 120  // gap between each LED starting its fade
+#define BOOT_ANIM_LED_FADE_MS    400  // each LED's own fade-in/out duration
+#define BOOT_ANIM_PWM_STEPS      8    // software-PWM carrier resolution for the red LEDs (125Hz @ 1ms tick)
+
+// Smoothstep ease (3x^2 - 2x^3), fixed-point: x and return both 0-256
+static uint16_t boot_anim_ease(uint16_t x) {
+    if (x >= 256) return 256;
+    uint32_t x2 = (uint32_t)x * x;
+    uint32_t x3 = x2 * x / 256;
+    return (uint16_t)((3 * x2 - 2 * x3) / 256);
+}
+
+// Brightness fraction (0-256) for LED `i` at time t_ms: staggered fade in during
+// the rise phase, staggered fade out (reverse order) during the fall phase.
+static uint16_t boot_anim_led_fraction(uint8_t i, uint32_t t_ms) {
+    if (t_ms < BOOT_ANIM_RISE_MS) {
+        uint32_t start = (uint32_t)i * BOOT_ANIM_LED_STAGGER_MS;
+        if (t_ms <= start) return 0;
+        uint32_t d = t_ms - start;
+        if (d >= BOOT_ANIM_LED_FADE_MS) return 256;
+        return boot_anim_ease((uint16_t)(d * 256 / BOOT_ANIM_LED_FADE_MS));
+    } else {
+        uint32_t fall_t = t_ms - BOOT_ANIM_RISE_MS;
+        uint32_t start  = (uint32_t)(3 - i) * BOOT_ANIM_LED_STAGGER_MS;
+        if (fall_t <= start) return 256;
+        uint32_t d = fall_t - start;
+        if (d >= BOOT_ANIM_LED_FADE_MS) return 0;
+        return 256 - boot_anim_ease((uint16_t)(d * 256 / BOOT_ANIM_LED_FADE_MS));
+    }
+}
+
+// Boot animation - staggered fade-in/out LED cascade + a true PWM-duty
+// backlight fade (bypasses the 8-level brightness abstraction so the ramp
+// is continuous, not steppy). See README for the full writeup.
+static void boot_animation(void) {
+    pin_t    leds[4]      = {LED1_PIN, LED2_PIN, LED3_PIN, LED4_PIN};
+    uint8_t  target_level = get_backlight_level();
+    bool     fade_backlight = is_backlight_enabled();
+    uint32_t target_duty  = fade_backlight ? (0xFFFFUL * target_level / BACKLIGHT_LEVELS) : 0;
+
+    for (uint32_t t = 0; t <= BOOT_ANIM_RISE_MS + BOOT_ANIM_FALL_MS; t++) {
+        if (fade_backlight) {
+            uint16_t bl_env = (t < BOOT_ANIM_RISE_MS)
+                                   ? boot_anim_ease((uint16_t)(t * 256 / BOOT_ANIM_RISE_MS))
+                                   : 256 - boot_anim_ease((uint16_t)((t - BOOT_ANIM_RISE_MS) * 256 / BOOT_ANIM_FALL_MS));
+            uint32_t duty = target_duty * bl_env / 256;
+            pwmEnableChannel(&BACKLIGHT_PWM_DRIVER, BACKLIGHT_PWM_CHANNEL - 1, PWM_FRACTION_TO_WIDTH(&BACKLIGHT_PWM_DRIVER, 0xFFFFU, duty));
+        }
+
+        uint8_t carrier_phase = t % BOOT_ANIM_PWM_STEPS;
+        for (uint8_t i = 0; i < 4; i++) {
+            uint8_t coarse_duty = (uint8_t)(boot_anim_led_fraction(i, t) * BOOT_ANIM_PWM_STEPS / 256);
+            gpio_write_pin(leds[i], carrier_phase < coarse_duty);
+        }
+
+        wait_ms(1);
+    }
+
+    if (fade_backlight) {
+        backlight_set(target_level);  // hand back to the normal backlight level (exact, perceptually-corrected value)
+    }
+    set_layer_leds(get_highest_layer(layer_state));
+}
+
 void keyboard_post_init_user(void) {
     // Set LED pins as output
     gpio_set_pin_output(LED1_PIN);
     gpio_set_pin_output(LED2_PIN);
     gpio_set_pin_output(LED3_PIN);
     gpio_set_pin_output(LED4_PIN);
-    gpio_write_pin_high(LED1_PIN);
+    gpio_write_pin_low(LED1_PIN);
     gpio_write_pin_low(LED2_PIN);
     gpio_write_pin_low(LED3_PIN);
     gpio_write_pin_low(LED4_PIN);
 
     // Set encoder 1 switch pin as input with pullup (active low)
     gpio_set_pin_input_high(ENC_SW_1_PIN);
+
+    boot_animation();
 }
 
 layer_state_t layer_state_set_user(layer_state_t state) {
-    // Turn off LEDs first
-    gpio_write_pin_low(LED1_PIN);
-    gpio_write_pin_low(LED2_PIN);
-    gpio_write_pin_low(LED3_PIN);
-    gpio_write_pin_low(LED4_PIN);
+    set_layer_leds(get_highest_layer(state));
 
-    switch (get_highest_layer(state)) {
-        case _BASE:
-            gpio_write_pin_high(LED1_PIN);  // LED1 on for base
-            break;
-        case _LAY_1:
-            gpio_write_pin_high(LED2_PIN);  // LED2 on for Layer 1
-            break;
-        case _LAY_2:
-            gpio_write_pin_high(LED3_PIN);  // LED3 on for Layer 2
-            break;
-        case _LAY_3:
-            gpio_write_pin_high(LED4_PIN);  // LED4 on for Layer 3
-            break;
-    }
     return state;
 }
 

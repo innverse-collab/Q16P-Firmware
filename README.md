@@ -21,11 +21,14 @@ backlight control.
 
 - 4x5 key matrix (20 keys), COL2ROW diode direction
 - 2 rotary encoders; 1 has a click switch, both support rotation
-- 4 VIA layers with per-layer LED indicators
+- 4 VIA layers with a progressive LED indicator (N LEDs lit for layer N -
+  see [Layer Indicator LEDs](#layer-indicator-leds))
 - Per-switch PWM backlight (brightness adjustable from the keyboard itself)
 - Encoder 1's click runs a hardcoded, OS-aware shortcut per layer (opens a
   URL, screenshot, terminal, lock screen) - see [Encoder Click
   Shortcuts](#encoder-click-shortcuts)
+- One-time LED/backlight reveal animation on power-up - see [Boot
+  Animation](#boot-animation)
 
 ## Hardware
 
@@ -64,6 +67,62 @@ diode orientation in `Switch.kicad_sch`.
 > silkscreen wasn't available to cross-check. If the keymap comes out
 > mirrored left-right or top-to-bottom on the real board, fix the ordering
 > in `keyboard.json`, not the keymap.
+
+### Layer Indicator LEDs
+
+The 4 Mode LEDs show the active layer progressively - the LED count lit
+equals the layer number, rather than lighting a single LED per layer:
+
+| Layer | LED 1 | LED 2 | LED 3 | LED 4 |
+|---|---|---|---|---|
+| 1 (base) | on | off | off | off |
+| 2 (`_LAY_1`) | on | on | off | off |
+| 3 (`_LAY_2`) | on | on | on | off |
+| 4 (`_LAY_3`) | on | on | on | on |
+
+Implemented in `layer_state_set_user()` (`keymaps/via_encoder/keymap.c`).
+
+### Boot Animation
+
+On power-up, `keyboard_post_init_user()` runs a one-time ~1.8s animation
+before settling into normal operation:
+
+- The 4 Mode LEDs fade in individually, staggered (120ms apart, each with
+  its own 400ms fade), so LED 1 is already brightening by the time LED 2
+  starts - a smooth cascade rather than a 1/2/3/4 step sequence. They hold
+  briefly at full brightness, then fade back out in reverse order
+  (4→3→2→1), ending on whatever the actual boot layer calls for (always
+  Layer 1/base on power-on, so LED 1 settles back on and the rest stay
+  off).
+- The per-switch backlight fades in and back out over the same window,
+  peaking at its saved brightness level partway through and easing back
+  down before settling there again at the end.
+- Both use an ease-in-out (smoothstep) curve rather than a linear ramp, for
+  the gentler acceleration/deceleration feel of the fade.
+
+**Why this needed more than `backlight_level()` stepping:** the backlight
+abstraction only has `BACKLIGHT_LEVELS` (8) discrete steps - cycling
+through them, even quickly, reads as visible jumps rather than a continuous
+glow. The animation instead drives the PWM channel's duty cycle directly
+(`pwmEnableChannel`/`PWM_FRACTION_TO_WIDTH`, bypassing the level
+abstraction entirely) for a genuinely continuous ramp, only handing control
+back to the normal `backlight_set()` API once the animation ends.
+
+The 4 Mode LEDs have no PWM hardware at all (plain GPIO), so their fade is
+a software PWM: a fast on/off carrier (125Hz, 8 steps, driven off the same
+1ms animation tick) whose duty cycle is continuously swept by the
+per-LED envelope - fast enough to read as a smooth brightness change rather
+than a flicker.
+
+If the backlight was left off (brightness at 0), the fade step is skipped
+entirely - only the LED cascade plays. The animation never touches EEPROM;
+it computes the real saved level once up front, and the final
+`backlight_set()` call restores that exact (perceptually-corrected) value,
+so the saved brightness is unaffected by the animation itself.
+
+This runs once, blocking, before the main scan loop starts (USB
+enumeration is already underway by this point) - it adds about 1.8 seconds
+to boot time and no ongoing CPU/flash cost afterward.
 
 ### Known hardware limitations
 
@@ -169,7 +228,7 @@ qmk compile -kb q16p_stm32_macropad -km via_encoder
 
 Verified against the `qmk_firmware` checkout at `/root/qmk_firmware`: both
 `default` and `via_encoder` keymaps compile clean (`via_encoder` ->
-33594 bytes, well under the 64KB flash budget).
+34002 bytes, well under the 64KB flash budget).
 
 One mechanical (non-behavioral) change was needed versus the AtMega32u4
 source to get it compiling: the AtMega32u4 keymap calls QMK's old camelCase
